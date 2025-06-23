@@ -5,6 +5,7 @@ import joblib
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 import shap
+import os
 
 # Initialize Flask app
 app = Flask(__name__)
