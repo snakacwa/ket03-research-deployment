@@ -11,7 +11,7 @@ app = Flask(__name__)
 # Load already-trained models
 scaler = joblib.load("scaler_ket3.pkl")
 pca = joblib.load("pca_model_ket3.pkl")
-model = joblib.load("rf_classifier_3min_final.pkl")
+model = joblib.load("rf_student_model_ket3.pkl")
 
 # Expected features
 selected_features = [
