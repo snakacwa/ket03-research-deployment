@@ -1,5 +1,9 @@
-Flask
-pandas
+flask
 numpy
+pandas
 scikit-learn
 joblib
+seaborn
+matplotlib
+mne   
+shap
