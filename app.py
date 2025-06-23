@@ -6,6 +6,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 import shap
 import os
+from flask import Flask, request, jsonify, render_template
+
 
 # Initialize Flask app
 app = Flask(__name__)
