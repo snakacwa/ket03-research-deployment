@@ -27,67 +27,125 @@ selected_features = [
     'RAW_TP10', 'RAW_AF8', 'RAW_AF7'
 ]
 
-@app.route('/')
+def create_shap_plot(explainer, X_pca):
+    shap_values = explainer.shap_values(X_pca)
+    plt.figure(figsize=(10, 5))
+    shap.summary_plot(shap_values, X_pca, show=False)
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight')
+    plt.close()
+    buf.seek(0)
+    img_base64 = base64.b64encode(buf.getvalue()).decode('utf-8')
+    return img_base64
+
+@app.route('/', methods=['GET', 'POST'])
 def index():
-    return render_template("form.html")
+    prediction = None
+    probabilities = None
+    shap_image = None
+
+    if request.method == 'POST':
+        if 'file' in request.files:
+            file = request.files['file']
+            if file.filename == '':
+                prediction = "Error: No file selected"
+                return render_template('form.html', prediction=prediction)
+
+            try:
+                try:
+                    df = pd.read_csv(file, encoding='utf-8')
+                except UnicodeDecodeError:
+                    file.seek(0)
+                    df = pd.read_csv(file, encoding='latin1')
+
+                # Clean column headers
+                df.columns = df.columns.str.strip()
+                df.columns = df.columns.str.replace('\n', '', regex=False)
+
+                # Extract 'Minute' and 'Second' from TimeStamp
+                if 'TimeStamp' in df.columns:
+                    df['TimeStamp'] = pd.to_datetime(df['TimeStamp'], errors='coerce')
+                    df['Minute'] = df['TimeStamp'].dt.minute
+                    df['Second'] = df['TimeStamp'].dt.second
+                else:
+                    prediction = "Error: 'TimeStamp' column missing from uploaded file."
+                    return render_template('form.html', prediction=prediction)
+
+                # Check for missing EEG features
+                missing_cols = [feat for feat in FEATURES if feat not in df.columns]
+                if missing_cols:
+                    prediction = f"Error: Missing columns: {missing_cols}"
+                    return render_template('form.html', prediction=prediction)
+
+                # Preprocess
+                input_data = df[FEATURES]
+                scaled = scaler.transform(input_data)
+                reduced = pca.transform(scaled)
+
+                # Prediction
+                pred = model.predict(reduced)[0]
+                proba = model.predict_proba(reduced)[0].tolist()
+
+                prediction = "Relaxed" if pred == 0 else "Unconscious"
+                probabilities = proba
+
+                # SHAP XAI
+                explainer = shap.Explainer(model)
+                shap_image = create_shap_plot(explainer, reduced)
+
+            except Exception as e:
+                prediction = f"Error processing file: {e}"
+
+        else:
+            # Manual input (optional, commented out)
+            """
+            try:
+                input_data = [float(request.form[feat]) for feat in FEATURES]
+                df_manual = pd.DataFrame([dict(zip(FEATURES, input_data))])
+                scaled = scaler.transform(df_manual)
+                reduced = pca.transform(scaled)
+                pred = model.predict(reduced)[0]
+                proba = model.predict_proba(reduced)[0].tolist()
+                prediction = "Relaxed" if pred == 0 else "Unconscious"
+                probabilities = proba
+
+                explainer = shap.Explainer(model)
+                shap_image = create_shap_plot(explainer, reduced)
+
+            except Exception as e:
+                prediction = f"Error: {e}"
+            """
+
+    return render_template('form.html',
+                           features=FEATURES,
+                           prediction=prediction,
+                           probabilities=probabilities,
+                           shap_image=shap_image)
 
 @app.route('/predict', methods=['POST'])
-def predict():
+def predict_api():
+    data = request.get_json(force=True)
+
     try:
-        if 'file' not in request.files:
-            return jsonify({"error": "No file uploaded"}), 400
+        input_df = pd.DataFrame([data])
+        missing_cols = [feat for feat in FEATURES if feat not in input_df.columns]
+        if missing_cols:
+            return jsonify({'error': f'Missing features: {missing_cols}'}), 400
 
-        file = request.files['file']
-        df = pd.read_csv(file)
+        input_data = input_df[FEATURES]
+        scaled = scaler.transform(input_data)
+        reduced = pca.transform(scaled)
 
-        # Ensure all expected features are present
-        missing = [col for col in selected_features if col not in df.columns]
-        if missing:
-            return jsonify({"error": f"Missing features: {missing}"}), 400
+        prediction = model.predict(reduced)
+        prediction_proba = model.predict_proba(reduced)
 
-        # Extract features
-        X = df[selected_features]
-        X_scaled = scaler.transform(X)
-        X_pca = pca.transform(X_scaled)
-
-        # Make predictions
-        predictions = model.predict(X_pca)
-        probabilities = model.predict_proba(X_pca)
-
-        # SHAP explainability for Tree-based model
-        explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(X_pca)
-        pca_components = pca.components_  # shape: (n_pca, n_original_features)
-
-        # Construct results
-        results = []
-        for i, (pred, prob) in enumerate(zip(predictions, probabilities)):
-            shap_vals = shap_values[pred][i]  # SHAP values for predicted class
-            # Backproject to original features
-            original_feature_shap = np.dot(shap_vals, pca_components)
-
-            original_contrib = sorted(
-                zip(selected_features, original_feature_shap),
-                key=lambda x: abs(x[1]),
-                reverse=True
-            )
-
-            # Top 5 real EEG features
-            top_5 = [{
-                "feature": feat,
-                "impact": round(val, 4)
-            } for feat, val in original_contrib[:5]]
-
-            results.append({
-                "predicted_class": int(pred),
-                "probabilities": [round(float(p), 4) for p in prob],
-                "top_5_contributors": top_5
-            })
-
-        return render_template("form.html", results=results)
+        return jsonify({
+            'prediction': int(prediction[0]),
+            'probabilities': prediction_proba[0].tolist()
+        })
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
