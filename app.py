@@ -8,7 +8,7 @@ from sklearn.decomposition import PCA
 # Initialize Flask app
 app = Flask(__name__)
 
-# Load pre-trained models
+# Load already-trained models
 scaler = joblib.load("scaler.pkl")
 pca = joblib.load("pca_model.pkl")
 model = joblib.load("rf_classifier_3min_final.pkl")
